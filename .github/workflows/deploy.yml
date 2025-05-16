@@ -46,7 +46,7 @@ jobs:
           bastion_server ansible_host=${{ secrets.BASTION_HOST_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=bastion_key.pem
 
           [ts_server]
-          target_server ansible_host=${{ secrets.TS_HOST_IP }} ansible_user=YOUR_TS_USER ansible_ssh_private_key_file=ts_key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -q ubuntu@${{ secrets.BASTION_HOST_IP }} -i bastion_key.pem"'
+          target_server ansible_host=${{ secrets.TS_HOST_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=ts_key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -q ubuntu@${{ secrets.BASTION_HOST_IP }} -i bastion_key.pem"'
 
           # If your playbook vault-bind.yml is intended to run ON the TS_HOST,
           # then your 'all' group or the group targeted by the playbook should be ts_server.
