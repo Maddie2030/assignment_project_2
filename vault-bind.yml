@@ -180,8 +180,8 @@
       # debug: var=zabbix_web_container_status
 
     # --- Zabbix Agent Installation and Configuration ---
+# --- Zabbix Agent Installation and Configuration ---
     - name: Ensure Zabbix Agent can connect to Zabbix Server Host IP
-      # This fact is used to configure the Zabbix agent correctly
       set_fact:
         zabbix_server_host_ip: "{{ ansible_default_ipv4.address }}"
 
@@ -194,21 +194,39 @@
 
         - name: Add Zabbix repository for Ubuntu {{ zabbix_version }}
           ansible.builtin.apt_repository:
+            # Note: This URL must match your Ubuntu version (e.g., 'jammy' for 22.04)
             repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy main"
             state: present
-            filename: zabbix-{{ zabbix_version }} # Unique filename to avoid conflicts
+            filename: zabbix-{{ zabbix_version }}-main.list # Make sure filename is unique and consistent
+            update_cache: yes # Ensure cache is updated after adding repo
 
         - name: Add Zabbix repository for Agent extras (if needed)
           ansible.builtin.apt_repository:
             repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy non-free"
             state: present
-            filename: zabbix-{{ zabbix_version }}-nonfree
+            filename: zabbix-{{ zabbix_version }}-nonfree.list # Make sure filename is unique and consistent
+            update_cache: yes # Ensure cache is updated after adding repo
+
+        - name: Ensure all packages are upgraded and dependencies met
+          ansible.builtin.apt:
+            upgrade: dist
+            update_cache: yes
+            force_apt_get: yes # Force apt-get, which is sometimes more robust for dependency issues
+          # Note: This is a crucial step to try and resolve broken dependencies before installing zabbix-agent.
+
+        - name: Attempt to fix broken installations
+          ansible.builtin.apt:
+            autoremove: yes
+            fix_broken: yes
+            update_cache: yes
+          # Note: This command tries to resolve unmet dependencies and remove unnecessary packages.
 
         - name: Install Zabbix Agent package
           ansible.builtin.apt:
             name: zabbix-agent
             state: present
             update_cache: yes
+          # Note: We keep update_cache here as well to ensure latest package info.
 
     - name: Configure Zabbix Agent (zabbix_agentd.conf)
       ansible.builtin.lineinfile:
