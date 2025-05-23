@@ -3,13 +3,10 @@
   become: yes
 
   vars:
-    # Zabbix database credentials - **CHANGE THESE TO SECURE PASSWORDS!**
-    zabbix_mysql_root_password: "your_mysql_root_password_here"
-    zabbix_db_password: "your_zabbix_db_password_here"
-    # Zabbix web interface timezone
-    zabbix_web_timezone: "Asia/Kolkata" # Adjust to your timezone (e.g., "America/New_York")
-    # Zabbix version (for agent repository)
-    zabbix_version: "6.4" # Ensure this matches the Zabbix server Docker image version
+    zabbix_mysql_root_password: "**your_mysql_root_password_here**" # Note: This is the root password for the MySQL database server.
+    zabbix_db_password: "**your_zabbix_db_password_here**"     # Note: This password is for the 'zabbix' user that Zabbix server uses to connect to its database.
+    zabbix_web_timezone: "**Asia/Kolkata**" # Note: Replace 'Asia/Kolkata' with your actual timezone (e.g., "America/New_York", "Europe/London").
+    zabbix_version: "**6.4**" # Note: Ensure this version (e.g., '6.4') matches the Zabbix server Docker image version you intend to use.
 
   tasks:
     - name: Install essential system packages
@@ -37,7 +34,7 @@
 
         - name: Install (or update) AWS CLI v2
           command: "/tmp/aws/install --update"
-          become: true # Ensure this command runs with elevated privileges
+          become: true
 
     - name: Install and configure Docker
       block:
@@ -62,10 +59,8 @@
         - name: Ensure Docker group membership is active (requires re-login or newgrp)
           command: newgrp docker
           args:
-            creates: /var/run/docker.sock # This is a workaround for the current Ansible run
+            creates: /var/run/docker.sock
           changed_when: false
-          # Note: For persistent changes, a full reboot or SSH session restart is often needed.
-          # For Ansible's context, 'newgrp' helps for subsequent 'command' tasks.
 
     - name: Deploy Python Application
       block:
@@ -91,7 +86,7 @@
             ports:
               - "80:80"
             state: started
-            recreate: yes # Ensures container restarts if image changes or it's already running
+            recreate: yes
 
     # --- Zabbix Server and Web Interface Deployment (Docker) ---
     - name: Create Zabbix Docker network
@@ -107,7 +102,7 @@
       loop:
         - zabbix/zabbix-server-mysql:{{ zabbix_version }}-ubuntu-latest
         - zabbix/zabbix-web-apache-mysql:{{ zabbix_version }}-ubuntu-latest
-        - mysql:8.0 # Using a specific MySQL version for stability
+        - mysql:8.0
 
     - name: Run MySQL container for Zabbix database
       community.docker.docker_container:
@@ -119,7 +114,7 @@
           MYSQL_USER: "zabbix"
           MYSQL_PASSWORD: "{{ zabbix_db_password }}"
         volumes:
-          - /opt/zabbix/mysql:/var/lib/mysql # Persistent storage for database
+          - /opt/zabbix/mysql:/var/lib/mysql
         networks:
           - name: zabbix-net
         state: started
@@ -130,8 +125,6 @@
           interval: "5s"
           timeout: "3s"
           retries: 10
-      register: mysql_container_status
-      # debug: var=mysql_container_status
 
     - name: Run Zabbix server container
       community.docker.docker_container:
@@ -144,7 +137,7 @@
         networks:
           - name: zabbix-net
         links:
-          - zabbix-mysql-server:mysql-server # Establish a link for hostname resolution
+          - zabbix-mysql-server:mysql-server
         state: started
         recreate: yes
         restart_policy: always
@@ -153,15 +146,13 @@
           interval: "5s"
           timeout: "3s"
           retries: 10
-      register: zabbix_server_container_status
-      # debug: var=zabbix_server_container_status
 
     - name: Run Zabbix web interface container
       community.docker.docker_container:
         name: zabbix-web
         image: zabbix/zabbix-web-apache-mysql:{{ zabbix_version }}-ubuntu-latest
         ports:
-          - "8080:8080" # Map host port 8080 to container port 8080
+          - "8080:8080"
         env:
           DB_SERVER_HOST: "zabbix-mysql-server"
           MYSQL_USER: "zabbix"
@@ -176,11 +167,8 @@
         state: started
         recreate: yes
         restart_policy: always
-      register: zabbix_web_container_status
-      # debug: var=zabbix_web_container_status
 
     # --- Zabbix Agent Installation and Configuration ---
-# --- Zabbix Agent Installation and Configuration ---
     - name: Ensure Zabbix Agent can connect to Zabbix Server Host IP
       set_fact:
         zabbix_server_host_ip: "{{ ansible_default_ipv4.address }}"
@@ -194,45 +182,43 @@
 
         - name: Add Zabbix repository for Ubuntu {{ zabbix_version }}
           ansible.builtin.apt_repository:
-            # Note: This URL must match your Ubuntu version (e.g., 'jammy' for 22.04)
             repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy main"
             state: present
-            filename: zabbix-{{ zabbix_version }}-main.list # Make sure filename is unique and consistent
-            update_cache: yes # Ensure cache is updated after adding repo
+            filename: zabbix-{{ zabbix_version }}-main.list
+            update_cache: yes
 
         - name: Add Zabbix repository for Agent extras (if needed)
           ansible.builtin.apt_repository:
             repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy non-free"
             state: present
-            filename: zabbix-{{ zabbix_version }}-nonfree.list # Make sure filename is unique and consistent
-            update_cache: yes # Ensure cache is updated after adding repo
+            filename: zabbix-{{ zabbix_version }}-nonfree.list
+            update_cache: yes
 
-        - name: Ensure all packages are upgraded and dependencies met
+        # --- CORRECTED DEPENDENCY RESOLUTION ---
+        - name: Attempt to resolve broken packages and upgrade system with apt dist-upgrade and autoremove
           ansible.builtin.apt:
             upgrade: dist
             update_cache: yes
-            force_apt_get: yes # Force apt-get, which is sometimes more robust for dependency issues
-          # Note: This is a crucial step to try and resolve broken dependencies before installing zabbix-agent.
-
-        - name: Attempt to fix broken installations
-          ansible.builtin.apt:
             autoremove: yes
-            fix_broken: yes
-            update_cache: yes
-          # Note: This command tries to resolve unmet dependencies and remove unnecessary packages.
+            # Note: dpkg_options are generally used for conflict resolution, not directly for '--fix-broken' install.
+            # The 'upgrade: dist' and 'autoremove: yes' are the primary ways to resolve general dependency issues within the apt module.
+
+        - name: Explicitly run apt install --fix-broken -y as a fallback for stubborn dependencies
+          ansible.builtin.command: /usr/bin/apt install --fix-broken -y
+          changed_when: false
+          failed_when: false # Allow this task to not cause a failure if it returns non-zero.
 
         - name: Install Zabbix Agent package
           ansible.builtin.apt:
             name: zabbix-agent
             state: present
             update_cache: yes
-          # Note: We keep update_cache here as well to ensure latest package info.
 
     - name: Configure Zabbix Agent (zabbix_agentd.conf)
       ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: "^Server=.*"
-        line: "Server={{ zabbix_server_host_ip }}" # Allow Zabbix Server to connect from this IP
+        line: "Server={{ zabbix_server_host_ip }}"
         state: present
       notify: Restart Zabbix Agent
 
@@ -240,7 +226,7 @@
       ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: "^ServerActive=.*"
-        line: "ServerActive={{ zabbix_server_host_ip }}" # Send active checks to this IP
+        line: "ServerActive={{ zabbix_server_host_ip }}"
         state: present
       notify: Restart Zabbix Agent
 
@@ -248,7 +234,7 @@
       ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: "^Hostname=.*"
-        line: "Hostname={{ ansible_hostname }}" # IMPORTANT: This hostname must match in Zabbix Frontend
+        line: "Hostname={{ ansible_hostname }}"
         state: present
       notify: Restart Zabbix Agent
 
@@ -271,8 +257,8 @@
       ansible.builtin.wait_for:
         port: 8080
         host: "{{ ansible_default_ipv4.address }}"
-        delay: 60 # Give Zabbix server more time to initialize DB
-        timeout: 300 # Wait up to 5 minutes for the web UI to be ready
+        delay: 60
+        timeout: 300
 
     - name: Authenticate with Zabbix API
       ansible.builtin.uri:
@@ -284,7 +270,7 @@
           method: "user.login"
           params:
             user: "Admin"
-            password: "zabbix" # Default Zabbix Admin password
+            password: "zabbix"
           id: 1
         headers:
           Content-Type: "application/json"
@@ -400,7 +386,7 @@
               params:
                 host: "{{ ansible_hostname }}"
                 interfaces:
-                  - type: 1 # Zabbix Agent
+                  - type: 1
                     main: 1
                     useip: 1
                     ip: "{{ ansible_default_ipv4.address }}"
@@ -418,7 +404,6 @@
             status_code: 200
           when: current_host_get_result.json.result | length == 0
           register: host_add_result
-          # debug: var=host_add_result
 
         - name: Update host if it exists (e.g., attach template if missing)
           ansible.builtin.uri:
@@ -449,8 +434,6 @@
             validate_certs: false
             status_code: 200
           when: current_host_get_result.json.result | length > 0
-          register: host_update_result
-          # debug: var=host_update_result
 
     - name: Create or update Zabbix Dashboard for EC2 Monitoring
       block:
@@ -487,14 +470,16 @@
                 hostids: "{{ (current_host_get_result.json.result | first | default({'hostid': ''})).hostid if current_host_get_result.json.result | length > 0 else (host_add_result.json.result | default({'hostids': ['']})).hostids | first }}"
                 filter:
                   key_:
-                    - "system.cpu.load[percpu,avg1]" # CPU load
-                    - "vm.memory.size[used]"          # Memory Used
-                    - "vfs.fs.size[/,used]"           # Disk space used on root partition
-                search: # Also search by name if key_ filter isn't enough
+                    - "system.cpu.load[percpu,avg1]"
+                    - "vm.memory.size[used]"
+                    - "vfs.fs.size[/home,used]"
+                    - "vfs.fs.size[/,used]"
+                search:
                   name:
                     - "CPU load (1 min average per CPU)"
                     - "Memory used"
-                    - "Used space on $1"
+                    - "Used space on /home"
+                    - "Used space on /"
               auth: "{{ zabbix_auth_token }}"
               id: 9
             headers:
@@ -502,13 +487,13 @@
             validate_certs: false
             status_code: 200
           register: item_get_result
-          # debug: var=item_get_result
 
         - name: Set Item IDs facts
           set_fact:
             cpu_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'CPU load') | map(attribute='itemid') | first | default(omit) }}"
             memory_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Memory used') | map(attribute='itemid') | first | default(omit) }}"
-            disk_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Used space on /') | map(attribute='itemid') | first | default(omit) }}"
+            disk_root_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Used space on /') | map(attribute='itemid') | first | default(omit) }}"
+            disk_home_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Used space on /home') | map(attribute='itemid') | first | default(omit) }}"
           when: item_get_result.json.result | length > 0
 
         - name: Create "EC2 Instance Monitoring" dashboard with graphs
@@ -525,20 +510,20 @@
                 auto_start: 1
                 widgets:
                   - type: "graph"
-                    name: "CPU Usage"
+                    name: "CPU Usage (1-min avg)"
                     x: 0
                     y: 0
                     width: 12
                     height: 5
                     fields:
-                      - type: 0 # Item based
+                      - type: 0
                         name: "itemids"
                         value: "[{{ cpu_itemid }}]"
-                      - type: 0 # Graph type
+                      - type: 0
                         name: "graphtype"
-                        value: "0" # Normal graph
+                        value: "0"
                   - type: "graph"
-                    name: "Memory Usage"
+                    name: "Memory Used"
                     x: 0
                     y: 5
                     width: 12
@@ -551,7 +536,7 @@
                         name: "graphtype"
                         value: "0"
                   - type: "graph"
-                    name: "Disk Usage (Root)"
+                    name: "Disk Usage (Root /)"
                     x: 0
                     y: 10
                     width: 12
@@ -559,7 +544,20 @@
                     fields:
                       - type: 0
                         name: "itemids"
-                        value: "[{{ disk_itemid }}]"
+                        value: "[{{ disk_root_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+                  - type: "graph"
+                    name: "Disk Usage (/home)"
+                    x: 0
+                    y: 15
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ disk_home_itemid }}]"
                       - type: 0
                         name: "graphtype"
                         value: "0"
@@ -569,8 +567,7 @@
               Content-Type: "application/json"
             validate_certs: false
             status_code: 200
-          when: dashboard_get_result.json.result | length == 0 and cpu_itemid is defined and memory_itemid is defined and disk_itemid is defined
-          # debug: var=create_dashboard_result
+          when: dashboard_get_result.json.result | length == 0 and cpu_itemid is defined and memory_itemid is defined and disk_root_itemid is defined
 
         - name: Update "EC2 Instance Monitoring" dashboard (if it exists)
           ansible.builtin.uri:
@@ -582,12 +579,12 @@
               method: "dashboard.update"
               params:
                 dashboardid: "{{ dashboard_get_result.json.result[0].dashboardid }}"
-                name: "EC2 Instance Monitoring" # Ensure consistent name
+                name: "EC2 Instance Monitoring"
                 display_period: 3600
                 auto_start: 1
                 widgets:
                   - type: "graph"
-                    name: "CPU Usage"
+                    name: "CPU Usage (1-min avg)"
                     x: 0
                     y: 0
                     width: 12
@@ -600,7 +597,7 @@
                         name: "graphtype"
                         value: "0"
                   - type: "graph"
-                    name: "Memory Usage"
+                    name: "Memory Used"
                     x: 0
                     y: 5
                     width: 12
@@ -613,7 +610,7 @@
                         name: "graphtype"
                         value: "0"
                   - type: "graph"
-                    name: "Disk Usage (Root)"
+                    name: "Disk Usage (Root /)"
                     x: 0
                     y: 10
                     width: 12
@@ -621,7 +618,20 @@
                     fields:
                       - type: 0
                         name: "itemids"
-                        value: "[{{ disk_itemid }}]"
+                        value: "[{{ disk_root_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+                  - type: "graph"
+                    name: "Disk Usage (/home)"
+                    x: 0
+                    y: 15
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ disk_home_itemid }}]"
                       - type: 0
                         name: "graphtype"
                         value: "0"
@@ -631,8 +641,7 @@
               Content-Type: "application/json"
             validate_certs: false
             status_code: 200
-          when: dashboard_get_result.json.result | length > 0 and cpu_itemid is defined and memory_itemid is defined and disk_itemid is defined
-          # debug: var=update_dashboard_result
+          when: dashboard_get_result.json.result | length > 0 and cpu_itemid is defined and memory_itemid is defined and disk_root_itemid is defined
 
     - name: Display Zabbix Web Interface URL
       debug:
