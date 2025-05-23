@@ -1,9 +1,18 @@
-- name: Inject Secrets into EC2
+- name: Inject Secrets into EC2 and Configure Zabbix Monitoring
   hosts: all
   become: yes
 
+  vars:
+    # Zabbix database credentials - **CHANGE THESE TO SECURE PASSWORDS!**
+    zabbix_mysql_root_password: "your_mysql_root_password_here"
+    zabbix_db_password: "your_zabbix_db_password_here"
+    # Zabbix web interface timezone
+    zabbix_web_timezone: "Asia/Kolkata" # Adjust to your timezone (e.g., "America/New_York")
+    # Zabbix version (for agent repository)
+    zabbix_version: "6.4" # Ensure this matches the Zabbix server Docker image version
+
   tasks:
-    - name: Install required system packages on Ubuntu
+    - name: Install essential system packages
       apt:
         name:
           - unzip
@@ -12,52 +21,607 @@
         state: present
         update_cache: true
 
-    - name: Download AWS CLI v2 installer for Ubuntu
-      get_url:
-        url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-        dest: "/tmp/awscliv2.zip"
-        mode: '0644'
+    - name: Download and install AWS CLI v2
+      block:
+        - name: Download AWS CLI v2 installer for Ubuntu
+          get_url:
+            url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+            dest: "/tmp/awscliv2.zip"
+            mode: '0644'
 
-    - name: Unzip AWS CLI v2 installer
-      unarchive:
-        src: "/tmp/awscliv2.zip"
-        dest: "/tmp"
-        remote_src: yes
+        - name: Unzip AWS CLI v2 installer
+          unarchive:
+            src: "/tmp/awscliv2.zip"
+            dest: "/tmp"
+            remote_src: yes
 
-    - name: Install (or update) AWS CLI v2
-      become: true
-      command: "/tmp/aws/install --update"
+        - name: Install (or update) AWS CLI v2
+          command: "/tmp/aws/install --update"
+          become: true # Ensure this command runs with elevated privileges
 
+    - name: Install and configure Docker
+      block:
+        - name: Install Docker.io package
+          apt:
+            name: docker.io
+            state: present
+            update_cache: true
 
-    - name: Install Docker
-      apt:
-        name: docker.io
+        - name: Start and enable Docker service
+          systemd:
+            name: docker
+            enabled: true
+            state: started
+
+        - name: Add 'ubuntu' user to 'docker' group
+          user:
+            name: ubuntu
+            groups: docker
+            append: yes
+
+        - name: Ensure Docker group membership is active (requires re-login or newgrp)
+          command: newgrp docker
+          args:
+            creates: /var/run/docker.sock # This is a workaround for the current Ansible run
+          changed_when: false
+          # Note: For persistent changes, a full reboot or SSH session restart is often needed.
+          # For Ansible's context, 'newgrp' helps for subsequent 'command' tasks.
+
+    - name: Deploy Python Application
+      block:
+        - name: Clone app repository
+          git:
+            repo: 'https://github.com/Maddie2030/assignment_project_2.git'
+            dest: /home/ubuntu/app
+            version: main
+            force: yes
+
+        - name: Build Docker image for my-python-app
+          community.docker.docker_image:
+            name: my-python-app
+            build:
+              path: /home/ubuntu/app
+            source: build
+            state: present
+
+        - name: Run Docker container for my-python-app
+          community.docker.docker_container:
+            name: my-python-app-container
+            image: my-python-app
+            ports:
+              - "80:80"
+            state: started
+            recreate: yes # Ensures container restarts if image changes or it's already running
+
+    # --- Zabbix Server and Web Interface Deployment (Docker) ---
+    - name: Create Zabbix Docker network
+      community.docker.docker_network:
+        name: zabbix-net
         state: present
-        update_cache: true
 
-    - name: Start and enable Docker
-      systemd:
-        name: docker
-        enabled: true
+    - name: Pull Zabbix Docker images
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+        state: present
+      loop:
+        - zabbix/zabbix-server-mysql:{{ zabbix_version }}-ubuntu-latest
+        - zabbix/zabbix-web-apache-mysql:{{ zabbix_version }}-ubuntu-latest
+        - mysql:8.0 # Using a specific MySQL version for stability
+
+    - name: Run MySQL container for Zabbix database
+      community.docker.docker_container:
+        name: zabbix-mysql-server
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: "{{ zabbix_mysql_root_password }}"
+          MYSQL_DATABASE: "zabbix"
+          MYSQL_USER: "zabbix"
+          MYSQL_PASSWORD: "{{ zabbix_db_password }}"
+        volumes:
+          - /opt/zabbix/mysql:/var/lib/mysql # Persistent storage for database
+        networks:
+          - name: zabbix-net
+        state: started
+        recreate: yes
+        restart_policy: always
+        healthcheck:
+          test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p{{ zabbix_mysql_root_password }}" ]
+          interval: "5s"
+          timeout: "3s"
+          retries: 10
+      register: mysql_container_status
+      # debug: var=mysql_container_status
+
+    - name: Run Zabbix server container
+      community.docker.docker_container:
+        name: zabbix-server
+        image: zabbix/zabbix-server-mysql:{{ zabbix_version }}-ubuntu-latest
+        env:
+          DB_SERVER_HOST: "zabbix-mysql-server"
+          MYSQL_USER: "zabbix"
+          MYSQL_PASSWORD: "{{ zabbix_db_password }}"
+        networks:
+          - name: zabbix-net
+        links:
+          - zabbix-mysql-server:mysql-server # Establish a link for hostname resolution
+        state: started
+        recreate: yes
+        restart_policy: always
+        healthcheck:
+          test: ["CMD", "zabbix_get", "-s", "localhost", "-k", "agent.ping"]
+          interval: "5s"
+          timeout: "3s"
+          retries: 10
+      register: zabbix_server_container_status
+      # debug: var=zabbix_server_container_status
+
+    - name: Run Zabbix web interface container
+      community.docker.docker_container:
+        name: zabbix-web
+        image: zabbix/zabbix-web-apache-mysql:{{ zabbix_version }}-ubuntu-latest
+        ports:
+          - "8080:8080" # Map host port 8080 to container port 8080
+        env:
+          DB_SERVER_HOST: "zabbix-mysql-server"
+          MYSQL_USER: "zabbix"
+          MYSQL_PASSWORD: "{{ zabbix_db_password }}"
+          ZBX_SERVER_HOST: "zabbix-server"
+          PHP_TZ: "{{ zabbix_web_timezone }}"
+        networks:
+          - name: zabbix-net
+        links:
+          - zabbix-server:zabbix-server
+          - zabbix-mysql-server:mysql-server
+        state: started
+        recreate: yes
+        restart_policy: always
+      register: zabbix_web_container_status
+      # debug: var=zabbix_web_container_status
+
+    # --- Zabbix Agent Installation and Configuration ---
+    - name: Ensure Zabbix Agent can connect to Zabbix Server Host IP
+      # This fact is used to configure the Zabbix agent correctly
+      set_fact:
+        zabbix_server_host_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Install Zabbix Agent on the EC2 instance
+      block:
+        - name: Add Zabbix GPG key
+          ansible.builtin.apt_key:
+            url: https://repo.zabbix.com/zabbix-official-repo.key
+            state: present
+
+        - name: Add Zabbix repository for Ubuntu {{ zabbix_version }}
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy main"
+            state: present
+            filename: zabbix-{{ zabbix_version }} # Unique filename to avoid conflicts
+
+        - name: Add Zabbix repository for Agent extras (if needed)
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64] http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu jammy non-free"
+            state: present
+            filename: zabbix-{{ zabbix_version }}-nonfree
+
+        - name: Install Zabbix Agent package
+          ansible.builtin.apt:
+            name: zabbix-agent
+            state: present
+            update_cache: yes
+
+    - name: Configure Zabbix Agent (zabbix_agentd.conf)
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^Server=.*"
+        line: "Server={{ zabbix_server_host_ip }}" # Allow Zabbix Server to connect from this IP
+        state: present
+      notify: Restart Zabbix Agent
+
+    - name: Configure Zabbix Agent (ServerActive)
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^ServerActive=.*"
+        line: "ServerActive={{ zabbix_server_host_ip }}" # Send active checks to this IP
+        state: present
+      notify: Restart Zabbix Agent
+
+    - name: Configure Zabbix Agent (Hostname)
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^Hostname=.*"
+        line: "Hostname={{ ansible_hostname }}" # IMPORTANT: This hostname must match in Zabbix Frontend
+        state: present
+      notify: Restart Zabbix Agent
+
+    - name: Open Zabbix Agent port (10050) in UFW if enabled
+      community.general.ufw:
+        rule: allow
+        port: '10050'
+        proto: tcp
+        comment: Allow Zabbix Agent traffic from Zabbix Server
+      when: ansible_facts.services['ufw.service'] is defined and ansible_facts.services['ufw.service'].state == 'running'
+
+    - name: Start and enable Zabbix Agent service
+      ansible.builtin.systemd:
+        name: zabbix-agent
+        enabled: yes
         state: started
 
-    - name: Clone app repository
-      git:
-        repo: 'https://github.com/Maddie2030/assignment_project_2.git'
-        dest: /home/ubuntu/app
-        version: main
-        force: yes
+    # --- Zabbix Host and Dashboard Configuration (via API) ---
+    - name: Wait for Zabbix Web Frontend to be fully accessible
+      ansible.builtin.wait_for:
+        port: 8080
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 60 # Give Zabbix server more time to initialize DB
+        timeout: 300 # Wait up to 5 minutes for the web UI to be ready
 
-    - name: Build Docker image
-      command:
-        sudo usermod -aG docker ubuntu
-      command:
-        docker build -t my-python-app .
-      args:
-        chdir: /home/ubuntu/app
+    - name: Authenticate with Zabbix API
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "user.login"
+          params:
+            user: "Admin"
+            password: "zabbix" # Default Zabbix Admin password
+          id: 1
+        headers:
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: 200
+      register: zabbix_login_result
 
-    - name: Run Docker container
-      command: >
-        docker run -d --name my-python-app-container
-        -p 80:80
-        my-python-app
+    - name: Extract Zabbix API authentication token
+      set_fact:
+        zabbix_auth_token: "{{ zabbix_login_result.json.result }}"
+
+    - name: Get Template ID for "Template OS Linux by Zabbix agent"
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "template.get"
+          params:
+            output: ["templateid"]
+            filter:
+              name: "Template OS Linux by Zabbix agent"
+          auth: "{{ zabbix_auth_token }}"
+          id: 2
+        headers:
+          Content-Type: "application/json"
+        validate_certs: false
+        status_code: 200
+      register: template_get_result
+
+    - name: Set Linux Template ID fact
+      set_fact:
+        linux_template_id: "{{ template_get_result.json.result[0].templateid }}"
+      when: template_get_result.json.result | length > 0
+
+    - name: Get Host Group ID for 'Linux servers' or create it
+      block:
+        - name: Check if 'Linux servers' group exists
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "hostgroup.get"
+              params:
+                output: ["groupid"]
+                filter:
+                  name: "Linux servers"
+              auth: "{{ zabbix_auth_token }}"
+              id: 3
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          register: hostgroup_get_result
+
+        - name: Create 'Linux servers' host group if it doesn't exist
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "hostgroup.create"
+              params:
+                name: "Linux servers"
+              auth: "{{ zabbix_auth_token }}"
+              id: 4
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          when: hostgroup_get_result.json.result | length == 0
+          register: hostgroup_create_result
+
+        - name: Set 'Linux servers' group ID
+          set_fact:
+            linux_servers_groupid: "{{ (hostgroup_get_result.json.result | first | default({'groupid': ''})).groupid if hostgroup_get_result.json.result | length > 0 else (hostgroup_create_result.json.result | default({'groupids': ['']})).groupids | first }}"
+
+    - name: Add or Update current EC2 instance as a host in Zabbix
+      block:
+        - name: Check if host already exists
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "host.get"
+              params:
+                output: ["hostid", "name"]
+                filter:
+                  host: "{{ ansible_hostname }}"
+                selectInterfaces: ["interfaceid"]
+              auth: "{{ zabbix_auth_token }}"
+              id: 5
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          register: current_host_get_result
+
+        - name: Add host if it doesn't exist
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "host.create"
+              params:
+                host: "{{ ansible_hostname }}"
+                interfaces:
+                  - type: 1 # Zabbix Agent
+                    main: 1
+                    useip: 1
+                    ip: "{{ ansible_default_ipv4.address }}"
+                    dns: ""
+                    port: "10050"
+                groups:
+                  - groupid: "{{ linux_servers_groupid }}"
+                templates:
+                  - templateid: "{{ linux_template_id }}"
+              auth: "{{ zabbix_auth_token }}"
+              id: 6
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          when: current_host_get_result.json.result | length == 0
+          register: host_add_result
+          # debug: var=host_add_result
+
+        - name: Update host if it exists (e.g., attach template if missing)
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "host.update"
+              params:
+                hostid: "{{ current_host_get_result.json.result[0].hostid }}"
+                groups:
+                  - groupid: "{{ linux_servers_groupid }}"
+                templates:
+                  - templateid: "{{ linux_template_id }}"
+                interfaces:
+                  - interfaceid: "{{ current_host_get_result.json.result[0].interfaces[0].interfaceid }}"
+                    type: 1
+                    main: 1
+                    useip: 1
+                    ip: "{{ ansible_default_ipv4.address }}"
+                    dns: ""
+                    port: "10050"
+              auth: "{{ zabbix_auth_token }}"
+              id: 7
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          when: current_host_get_result.json.result | length > 0
+          register: host_update_result
+          # debug: var=host_update_result
+
+    - name: Create or update Zabbix Dashboard for EC2 Monitoring
+      block:
+        - name: Check if "EC2 Instance Monitoring" dashboard exists
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "dashboard.get"
+              params:
+                output: ["dashboardid", "name"]
+                filter:
+                  name: "EC2 Instance Monitoring"
+              auth: "{{ zabbix_auth_token }}"
+              id: 8
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          register: dashboard_get_result
+
+        - name: Get Item IDs for current host's CPU, Memory, and Disk usage
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "item.get"
+              params:
+                output: ["itemid", "name"]
+                hostids: "{{ (current_host_get_result.json.result | first | default({'hostid': ''})).hostid if current_host_get_result.json.result | length > 0 else (host_add_result.json.result | default({'hostids': ['']})).hostids | first }}"
+                filter:
+                  key_:
+                    - "system.cpu.load[percpu,avg1]" # CPU load
+                    - "vm.memory.size[used]"          # Memory Used
+                    - "vfs.fs.size[/,used]"           # Disk space used on root partition
+                search: # Also search by name if key_ filter isn't enough
+                  name:
+                    - "CPU load (1 min average per CPU)"
+                    - "Memory used"
+                    - "Used space on $1"
+              auth: "{{ zabbix_auth_token }}"
+              id: 9
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          register: item_get_result
+          # debug: var=item_get_result
+
+        - name: Set Item IDs facts
+          set_fact:
+            cpu_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'CPU load') | map(attribute='itemid') | first | default(omit) }}"
+            memory_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Memory used') | map(attribute='itemid') | first | default(omit) }}"
+            disk_itemid: "{{ item_get_result.json.result | selectattr('name', 'search', 'Used space on /') | map(attribute='itemid') | first | default(omit) }}"
+          when: item_get_result.json.result | length > 0
+
+        - name: Create "EC2 Instance Monitoring" dashboard with graphs
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "dashboard.create"
+              params:
+                name: "EC2 Instance Monitoring"
+                display_period: 3600
+                auto_start: 1
+                widgets:
+                  - type: "graph"
+                    name: "CPU Usage"
+                    x: 0
+                    y: 0
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0 # Item based
+                        name: "itemids"
+                        value: "[{{ cpu_itemid }}]"
+                      - type: 0 # Graph type
+                        name: "graphtype"
+                        value: "0" # Normal graph
+                  - type: "graph"
+                    name: "Memory Usage"
+                    x: 0
+                    y: 5
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ memory_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+                  - type: "graph"
+                    name: "Disk Usage (Root)"
+                    x: 0
+                    y: 10
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ disk_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+              auth: "{{ zabbix_auth_token }}"
+              id: 10
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          when: dashboard_get_result.json.result | length == 0 and cpu_itemid is defined and memory_itemid is defined and disk_itemid is defined
+          # debug: var=create_dashboard_result
+
+        - name: Update "EC2 Instance Monitoring" dashboard (if it exists)
+          ansible.builtin.uri:
+            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            method: POST
+            body_format: json
+            body:
+              jsonrpc: "2.0"
+              method: "dashboard.update"
+              params:
+                dashboardid: "{{ dashboard_get_result.json.result[0].dashboardid }}"
+                name: "EC2 Instance Monitoring" # Ensure consistent name
+                display_period: 3600
+                auto_start: 1
+                widgets:
+                  - type: "graph"
+                    name: "CPU Usage"
+                    x: 0
+                    y: 0
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ cpu_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+                  - type: "graph"
+                    name: "Memory Usage"
+                    x: 0
+                    y: 5
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ memory_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+                  - type: "graph"
+                    name: "Disk Usage (Root)"
+                    x: 0
+                    y: 10
+                    width: 12
+                    height: 5
+                    fields:
+                      - type: 0
+                        name: "itemids"
+                        value: "[{{ disk_itemid }}]"
+                      - type: 0
+                        name: "graphtype"
+                        value: "0"
+              auth: "{{ zabbix_auth_token }}"
+              id: 11
+            headers:
+              Content-Type: "application/json"
+            validate_certs: false
+            status_code: 200
+          when: dashboard_get_result.json.result | length > 0 and cpu_itemid is defined and memory_itemid is defined and disk_itemid is defined
+          # debug: var=update_dashboard_result
+
+    - name: Display Zabbix Web Interface URL
+      debug:
+        msg: "Zabbix Web Interface should be accessible at http://{{ ansible_default_ipv4.address }}:8080"
+        
+  handlers:
+    - name: Restart Zabbix Agent
+      ansible.builtin.systemd:
+        name: zabbix-agent
+        state: restarted
