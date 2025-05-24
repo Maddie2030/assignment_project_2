@@ -1,5 +1,5 @@
 - name: Inject Secrets into EC2 and Configure Zabbix Monitoring
-  hosts: all
+  hosts: ts_server
   become: yes
 
   vars:
