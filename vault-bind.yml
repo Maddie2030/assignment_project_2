@@ -220,7 +220,7 @@
       ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: "^Server=.*"
-        line: "Server={{ zabbix_server_host_ip }}"
+        line: "Server={{ 34.205.95.199 }}"
         state: present
       notify: Restart Zabbix Agent
 
@@ -228,7 +228,7 @@
       ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: "^ServerActive=.*"
-        line: "ServerActive={{ zabbix_server_host_ip }}"
+        line: "ServerActive={{ 34.205.95.199 }}"
         state: present
       notify: Restart Zabbix Agent
 
