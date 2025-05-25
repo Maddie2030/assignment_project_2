@@ -266,7 +266,7 @@
 
     - name: Authenticate with Zabbix API
       ansible.builtin.uri:
-        url: "http://34.205.95.199:8080/api_jsonrpc.php"
+        url: "http://34.205.95.199:8080/api_jsonrpc.php" #ansible_default_ipv4.address replaced with public ip
         method: POST
         body_format: json
         body:
@@ -300,7 +300,7 @@
 
     - name: Get Template ID for "Template OS Linux by Zabbix agent"
       ansible.builtin.uri:
-        url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+        url: "http://34.205.95.199:8080/api_jsonrpc.php"
         method: POST
         body_format: json
         body:
@@ -327,7 +327,7 @@
       block:
         - name: Check if 'Linux servers' group exists
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -347,7 +347,7 @@
 
         - name: Create 'Linux servers' host group if it doesn't exist
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -372,7 +372,7 @@
       block:
         - name: Check if host already exists
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -393,7 +393,7 @@
 
         - name: Add host if it doesn't exist
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -405,7 +405,7 @@
                   - type: 1
                     main: 1
                     useip: 1
-                    ip: "{{ ansible_default_ipv4.address }}"
+                    ip: "34.205.95.199"
                     dns: ""
                     port: "10050"
                 groups:
@@ -423,7 +423,7 @@
 
         - name: Update host if it exists (e.g., attach template if missing)
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -440,7 +440,7 @@
                     type: 1
                     main: 1
                     useip: 1
-                    ip: "{{ ansible_default_ipv4.address }}"
+                    ip: "34.205.95.199"
                     dns: ""
                     port: "10050"
               auth: "{{ zabbix_auth_token }}"
@@ -455,7 +455,7 @@
       block:
         - name: Check if "EC2 Instance Monitoring" dashboard exists
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -475,7 +475,7 @@
 
         - name: Get Item IDs for current host's CPU, Memory, and Disk usage
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -514,7 +514,7 @@
 
         - name: Create "EC2 Instance Monitoring" dashboard with graphs
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -587,7 +587,7 @@
 
         - name: Update "EC2 Instance Monitoring" dashboard (if it exists)
           ansible.builtin.uri:
-            url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+            url: "http://34.205.95.199:8080/api_jsonrpc.php"
             method: POST
             body_format: json
             body:
@@ -661,7 +661,7 @@
 
     - name: Display Zabbix Web Interface URL
       debug:
-        msg: "Zabbix Web Interface should be accessible at http://{{ ansible_default_ipv4.address }}:8080"
+        msg: "Zabbix Web Interface should be accessible at http://34.205.95.199:8080"
         
   handlers:
     - name: Restart Zabbix Agent
