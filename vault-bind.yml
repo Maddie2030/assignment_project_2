@@ -122,7 +122,7 @@
         recreate: yes
         restart_policy: always
         healthcheck:
-          test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p{{ zabbix_mysql_root_password }}" ]
+          test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p{{ zabbix_mysql_root_password }} || exit 1"]
           interval: "5s"
           timeout: "3s"
           retries: 10
@@ -280,12 +280,12 @@
         status_code: 200
       register: zabbix_login_result
      
-    
+    - name: Display Zabbix login result
+      debug:
+        var: zabbix_login_result
 
     - name: Extract Zabbix API authentication token
       set_fact:
-        debug:
-           var: zabbix_login_result
         zabbix_auth_token: "{{ zabbix_login_result.json.result }}"
         when: zabbix_login_result.json is defined and 'result' in zabbix_login_result.json
 
