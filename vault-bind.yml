@@ -1,5 +1,5 @@
 - name: Inject Secrets into EC2 and Configure Zabbix Monitoring
-  hosts: all
+  hosts: bastion
   become: yes
 
   vars:
@@ -290,8 +290,6 @@
       when: zabbix_login_result is defined
       delegate_to: localhost
       run_once: true
-
-     
 
 
     - name: Extract Zabbix API authentication token
