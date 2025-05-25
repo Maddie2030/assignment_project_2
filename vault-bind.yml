@@ -260,13 +260,13 @@
     - name: Wait for Zabbix Web Frontend to be fully accessible
       ansible.builtin.wait_for:
         port: 8080
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "34.205.95.199"
         delay: 60
         timeout: 300
 
     - name: Authenticate with Zabbix API
       ansible.builtin.uri:
-        url: "http://{{ ansible_default_ipv4.address }}:8080/api_jsonrpc.php"
+        url: "http://34.205.95.199:8080/api_jsonrpc.php"
         method: POST
         body_format: json
         body:
