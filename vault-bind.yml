@@ -281,6 +281,16 @@
         validate_certs: false
         status_code: 200
       register: zabbix_login_result
+      delegate_to: localhost
+      run_once: true
+
+    - name: Display Zabbix login result
+      debug:
+        var: zabbix_login_result
+      when: zabbix_login_result is defined
+      delegate_to: localhost
+      run_once: true
+
      
 
 
