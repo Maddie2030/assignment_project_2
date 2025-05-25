@@ -34,7 +34,7 @@
             remote_src: yes
 
         - name: Install (or update) AWS CLI v2
-          command: "/tmp/aws/install --update"
+          command: "/tmp/aFws/install --update"
           become: true
 
     - name: Install and configure Docker
@@ -135,6 +135,7 @@
           DB_SERVER_HOST: "zabbix-mysql-server"
           MYSQL_USER: "zabbix"
           MYSQL_PASSWORD: "{{ zabbix_db_password }}"
+          ZBX_STARTUP_DELAY: 300
         networks:
           - name: zabbix-net
         links:
