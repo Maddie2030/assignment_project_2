@@ -173,7 +173,7 @@
     # --- Zabbix Agent Installation and Configuration ---
     - name: Ensure Zabbix Agent can connect to Zabbix Server Host IP
       set_fact:
-        zabbix_server_host_ip: "{{ "34.205.95.199" }}"
+        zabbix_server_host_ip: "34.205.95.199"
 
     - name: Install Zabbix Agent on the EC2 instance
       block:
