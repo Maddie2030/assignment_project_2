@@ -253,7 +253,9 @@
         name: zabbix-agent
         enabled: yes
         state: started
-
+    - name: Display Zabbix login result
+      debug:
+        var: zabbix_login_result
     # --- Zabbix Host and Dashboard Configuration (via API) ---
     - name: Wait for Zabbix Web Frontend to be fully accessible
       ansible.builtin.wait_for:
@@ -280,9 +282,7 @@
         status_code: 200
       register: zabbix_login_result
      
-    - name: Display Zabbix login result
-      debug:
-        var: zabbix_login_result
+
 
     - name: Extract Zabbix API authentication token
       set_fact:
