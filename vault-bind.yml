@@ -3,8 +3,8 @@
   become: yes
 
   vars:
-    zabbix_mysql_root_password: "your_mysql_root_password_here" # Note: This is the root password for the MySQL database server.
-    zabbix_db_password: "your_zabbix_db_password_here"     # Note: This password is for the 'zabbix' user that Zabbix server uses to connect to its database.
+    zabbix_mysql_root_password: "password" # Note: This is the root password for the MySQL database server.
+    zabbix_db_password: "password"     # Note: This password is for the 'zabbix' user that Zabbix server uses to connect to its database.
     zabbix_web_timezone: "Asia/Kolkata" # Note: Replace 'Asia/Kolkata' with your actual timezone (e.g., "America/New_York", "Europe/London").
     zabbix_version: "6.4" # Note: Ensure this version (e.g., '6.4') matches the Zabbix server Docker image version you intend to use.
 
