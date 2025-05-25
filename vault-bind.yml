@@ -34,7 +34,7 @@
             remote_src: yes
 
         - name: Install (or update) AWS CLI v2
-          command: "/tmp/aFws/install --update"
+          command: "/tmp/aws/install --update"
           become: true
 
     - name: Install and configure Docker
