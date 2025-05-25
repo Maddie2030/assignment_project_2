@@ -135,7 +135,7 @@
           DB_SERVER_HOST: "zabbix-mysql-server"
           MYSQL_USER: "zabbix"
           MYSQL_PASSWORD: "{{ zabbix_db_password }}"
-          ZBX_STARTUP_DELAY: "300"
+          ZBX_STARTUP_DELAY: "900"
         networks:
           - name: zabbix-net
         links:
